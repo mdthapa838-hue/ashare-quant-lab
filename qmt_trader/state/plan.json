@@ -1,0 +1,8 @@
+{
+  "trade_date": "20261014",
+  "universe_size": 2168,
+  "market_ret": -12.87,
+  "market_threshold": -20.0,
+  "market_passed": false,
+  "action": "空仓等待（择时未通过）"
+}

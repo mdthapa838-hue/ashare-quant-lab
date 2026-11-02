@@ -1,0 +1,60 @@
+# ===== 数据与产物（不入库）=====
+qmt_trader/data_cache/
+qmt_trader/output/
+qmt_trader/logs/
+research/
+*.csv
+*.xlsx
+*.pkl
+*.log
+
+# ===== 运行态数据库与备份 =====
+*.sqlite3
+*.sqlite3-shm
+*.sqlite3-wal
+*.bak_*
+*.bak
+runs.jsonl
+
+# ===== 交易与账户相关（敏感，绝不入库）=====
+dyn_trades_*.csv
+fund_*.csv
+*account*
+*position*
+*deal*
+
+# ===== 依赖与缓存 =====
+node_modules/
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+dist/
+build/
+*.egg-info/
+
+# ===== 本会话临时物 =====
+dsh-superagent-prototype/
+v2rayNG_2.2.6_apk/
+_sectest_demo/
+undefined/
+%SystemDrive%/
+.local/
+
+# ===== 环境与密钥 =====
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+credentials*.json
+
+# ===== 编辑器/系统 =====
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+desktop.ini

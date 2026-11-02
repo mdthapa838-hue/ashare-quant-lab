@@ -1,0 +1,92 @@
+# ============================================================================
+# strategies/boll_lower_rebound.yaml
+# 布林带下轨反弹策略 - 配置文件
+# 所有参数集中在此，代码读取此文件，不硬编码
+# ============================================================================
+
+meta:
+  name: 布林带下轨反弹
+  version: "1.0"
+  description: >
+    在「长期趋势向上 + 中期下跌 + 短期超卖」的位置买入布林带下轨，
+    持有至布林带上轨或止损离场。
+  created: "2026-10-14"
+
+# ---------------------------------------------------------------- 标的池
+universe:
+  market_cap_min: 30          # 亿元（下限）
+  market_cap_max: 80          # 亿元（上限）
+  exclude_st: true            # 排除ST/*ST/退市整理
+  exclude_bj: true            # 排除北交所
+  min_avg_amount: 2000        # 万元，20日均成交额下限
+  min_bars: 400               # 最少K线数量（保证指标可算）
+
+# ---------------------------------------------------------------- 入场条件
+entry:
+  # --- 相对位置 ---
+  pos120_max: 0.30            # 120日区间分位上限（越低越低位）
+
+  # --- 布林带 ---
+  bb_period: 20
+  bb_std: 2.0
+  streak_min: 2               # 连续收在下轨的最少天数
+
+  # --- 中期趋势 ---
+  ma60_slope_window: 20       # MA60斜率计算窗口
+  ma60_slope_max: -0.01       # MA60斜率上限（必须为负，确保已跌透）
+
+  # --- 长期趋势（月线过滤，本次验证最有效的条件）---
+  use_monthly_filter: true
+  monthly_ma: 6               # 月线均线周期
+  monthly_slope_window: 1     # 月线斜率窗口（月）
+
+  # --- 择时（最强条件）---
+  use_market_filter: true
+  market_index: "932000"      # 中证2000
+  market_ret_window: 60       # 市场收益窗口（交易日）
+  market_ret_max: -20.0       # 市场60日收益上限（%），必须急跌
+
+  # --- 以下条件经测试无效，默认关闭 ---
+  use_j_filter: false         # J值过滤（测试结论：无边际贡献）
+  j_max: 13
+  use_weekly_filter: false    # 周线过滤（测试结论：仅+0.33pct）
+  use_sector_filter: false    # 热门赛道（测试结论：反向-2.99pct）
+
+# ---------------------------------------------------------------- 出场条件
+exit:
+  take_profit: "upper"        # upper=上轨 / mid=中轨（中轨扣成本后无利润）
+  stop_loss_pct: -0.12        # 止损百分比
+  max_hold_days: 60           # 最长持有交易日
+  stop_mode: "fixed"          # fixed=固定百分比 / atr=ATR倍数 / entry_low=入场日最低价
+
+# ---------------------------------------------------------------- 组合与成本
+portfolio:
+  max_positions: 5            # 最多同时持有
+  position_sizing: "equal"    # equal=等权
+  initial_capital: 1000000    # 初始资金
+  max_position_pct: 0.25      # 单只上限
+
+cost:
+  commission: 0.00025         # 佣金（单边，万2.5）
+  stamp_tax: 0.0005           # 印花税（卖出单边千0.5）
+  slippage: 0.00075           # 滑点（单边估算）
+  # 合计单边约 0.15%
+
+# ---------------------------------------------------------------- 交易约束
+constraints:
+  no_buy_limit_up: 0.095      # 开盘涨幅超过此值不可买入
+  no_sell_limit_down: -0.095  # 开盘跌幅低于此值不可卖出
+  signal_execution: "next_open"  # next_open=信号次日开盘执行
+
+# ---------------------------------------------------------------- 风控
+risk:
+  max_single_loss_pct: 0.02   # 单笔最大亏损占总资金比例（用于仓位计算参考）
+  max_portfolio_drawdown: 0.30  # 组合最大回撤预警线
+  sector_concentration_max: 2   # 同一行业最多持有数
+
+# ---------------------------------------------------------------- 回测设置
+backtest:
+  start_date: "2015-01-01"
+  end_date: ""                # 空=至最新
+  benchmark: "932000"         # 基准指数
+  risk_free_rate: 0.02        # 无风险利率（年化）

@@ -1,0 +1,144 @@
+# ============================================================================
+# 布林带下轨反弹策略 - 交易软件配置
+# ============================================================================
+
+app:
+  name: "布林带下轨反弹策略交易系统"
+  version: "1.0.0"
+  mode: "simulation"          # simulation=模拟 / live=实盘（需显式切换）
+  timezone: "Asia/Shanghai"
+
+# ---------------------------------------------------------------- 数据源
+datasource:
+  primary: "tushare"          # tushare | local
+  tushare:
+    # token 不写入本文件。程序按以下顺序自动获取：
+    #   1. 环境变量 TUSHARE_TOKEN
+    #   2. stock_suite/credentials.py（Windows 凭据管理器）
+    #   3. 本机凭据管理器 Codex/Tushare/Default
+    credential_sources:
+      - "env:TUSHARE_TOKEN"
+      - "stock_suite.credentials"
+      - "wincred:Codex/Tushare/Default"
+    min_interval: 0.35        # 接口调用间隔（秒），避免触发限频
+    retry: 3
+  local:
+    kline_dir: "F:/deepseek/股市/股市2/research/smallcap_20261014/out/kline_cache"
+    index_dir: "F:/deepseek/股市/股市2/research/smallcap_20261014/out"
+  cache_dir: "F:/deepseek/股市/股市2/qmt_trader/data_cache"
+
+# ---------------------------------------------------------------- 标的池
+universe:
+  market_cap_min: 30          # 亿元
+  market_cap_max: 80          # 亿元
+  exclude_st: true
+  exclude_bj: true
+  exclude_kcb: false          # 是否排除科创板
+  min_avg_amount: 2000        # 万元（20日均成交额）
+  min_bars: 400
+
+# ---------------------------------------------------------------- 策略参数
+strategy:
+  # --- 入场条件 ---
+  entry:
+    pos120_max: 0.30          # 120日区间分位上限
+    bb_period: 20
+    bb_std: 2.0
+    streak_min: 2             # 连续触轨最少天数
+    ma60_slope_window: 20
+    ma60_slope_max: -0.01
+    use_monthly_filter: true  # 月线趋势过滤（已实测有效）
+    monthly_ma: 6
+    use_market_filter: true   # 市场择时（已实测最强）
+    market_index: "000852.SH" # 中证1000（tushare 代码，替代中证2000）
+    market_ret_window: 60
+    market_ret_max: -20.0
+    # 已测试无效，默认关闭
+    use_j_filter: false
+    j_max: 13
+    use_weekly_filter: false
+
+  # --- 出场条件 ---
+  exit:
+    take_profit: "upper"      # upper=上轨 / mid=中轨
+    stop_loss_pct: -0.12
+    max_hold_days: 60
+    stop_mode: "fixed"        # fixed | atr | entry_low
+    atr_mult: 2.0
+
+  # --- 组合 ---
+  portfolio:
+    max_positions: 5
+    max_position_pct: 0.25
+    initial_capital: 1000000
+    min_order_amount: 10000   # 单笔最小下单金额
+    # 购买力口径（适配券商余额理财自动申赎）
+    #   cash  = 只用可用资金（无余额理财的账户）
+    #   auto  = 优先可用资金，不足时回退总资产（默认，适合余额理财）
+    #   total = 始终用总资产
+    purchasing_power_mode: "auto"
+
+  # --- 成本 ---
+  cost:
+    commission: 0.00025
+    stamp_tax: 0.0005
+    slippage: 0.00075
+    min_commission: 5.0       # 最低佣金（元）
+
+  # --- 风控 ---
+  risk:
+    sector_concentration_max: 2
+    max_single_loss_pct: 0.02
+    max_portfolio_drawdown: 0.30
+    daily_max_orders: 20
+    enable_kill_switch: true
+
+# ---------------------------------------------------------------- miniQMT
+qmt:
+  enabled: true
+  # userdata_mini 路径；留空则自动探测
+  userdata_path: ""
+  auto_detect_paths:
+    - "D:/迅投QMT交易终端浙商证券版/userdata_mini"
+    - "D:/迅投极速策略交易系统交易终端 大同证券QMT实盘/userdata_mini"
+    - "C:/国金QMT交易端/userdata_mini"
+    - "C:/迅投QMT/userdata_mini"
+  session_id: 20261014
+  account_id: ""              # 资金账号；留空则从 QMT 查询
+  account_type: "STOCK"
+  connect_timeout: 30
+
+  # --- 交易约束 ---
+  order:
+    price_type: "FIX_PRICE"   # FIX_PRICE=限价 / LATEST=最新价
+    price_offset_pct: 0.003   # 限价偏移（买入上浮/卖出下调）
+    no_buy_limit_up: 0.095    # 开盘涨幅超此值不买
+    no_sell_limit_down: -0.095
+    max_retry: 3
+
+# ---------------------------------------------------------------- 调度
+schedule:
+  # 每日任务时间（24小时制）
+  jobs:
+    - name: "盘前准备"
+      time: "09:00"
+      task: "prepare"
+    - name: "开盘执行信号"
+      time: "09:31"
+      task: "execute_entry"
+    - name: "持仓监控"
+      time: "14:50"
+      task: "monitor_exit"
+    - name: "收盘结算"
+      time: "15:10"
+      task: "settle"
+    - name: "数据更新"
+      time: "17:00"
+      task: "update_data"
+
+# ---------------------------------------------------------------- 日志
+logging:
+  level: "INFO"
+  dir: "F:/deepseek/股市/股市2/qmt_trader/logs"
+  keep_days: 60
+  console: true
