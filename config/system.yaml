@@ -1,0 +1,94 @@
+# ============================================================================
+# tushare_trader 配置 —— 唯一参数入口
+#
+# token 不写在这里！见 tushare_trader/credentials.py：
+#   环境变量 TUSHARE_TOKEN / ~/.tushare/token / ./.tushare_token
+# ============================================================================
+
+app:
+  name: "Tushare A股量化交易系统"
+  version: "1.0.0"
+  # backtest=只回测 / simulation=模拟盘（默认）/ live=仅生成实盘指令（不接券商）
+  mode: "simulation"
+  timezone: "Asia/Shanghai"
+
+# ---------------------------------------------------------------- 数据源
+datasource:
+  primary: "tushare"
+  tushare:
+    min_interval: 0.35        # 接口调用间隔（秒），避免触发限频
+    retry: 3
+  cache_dir: "data/cache"     # 相对仓库根目录
+
+# ---------------------------------------------------------------- 标的池
+universe:
+  market_cap_min: 30          # 总市值下限（亿元）
+  market_cap_max: 80          # 总市值上限（亿元）
+  exclude_st: true            # 排除 ST / *ST / 退市整理
+  exclude_bj: true            # 排除北交所
+  exclude_kcb: false          # 是否排除科创板
+  min_avg_amount: 2000        # 20 日均成交额下限（万元）
+
+# ---------------------------------------------------------------- 策略参数
+strategy:
+  entry:
+    pos120_max: 0.30          # 120 日区间分位上限（低位）
+    bb_period: 20
+    bb_std: 2.0
+    streak_min: 2             # 连续收在下轨的最少天数
+    ma60_slope_window: 20     # MA60 斜率窗口（交易日）
+    ma60_slope_max: -0.01     # MA60 斜率上限（必须为负）
+    use_monthly_filter: true  # 月线趋势过滤（回测 +5.90pct）
+    monthly_ma: 6
+    monthly_slope_window: 1
+    use_market_filter: true   # 市场择时（回测 +10.38pct，最强条件）
+    market_index: "000852.SH" # 中证1000
+    market_ret_window: 60
+    market_ret_max: -20.0     # 指数 60 日收益必须低于此值
+    use_weekly_filter: false
+    use_j_filter: false       # 回测无边际贡献，默认关闭
+    j_max: 13
+
+  exit:
+    take_profit: "upper"      # upper=布林上轨 / mid=中轨
+    stop_loss_pct: -0.12      # 止损
+    max_hold_days: 60         # 最长持有交易日
+    stop_mode: "fixed"        # fixed | atr | entry_low
+    atr_mult: 2.0
+
+  portfolio:
+    max_positions: 5
+    max_position_pct: 0.25
+    initial_capital: 1000000
+
+  cost:
+    commission: 0.00025       # 佣金（单边，万 2.5）
+    stamp_tax: 0.0005         # 印花税（卖出单边）
+    slippage: 0.00075         # 滑点（单边）
+    min_commission: 5.0       # 最低佣金（元）
+
+  risk:
+    sector_concentration_max: 2
+    daily_max_orders: 20
+    max_portfolio_drawdown: 0.30
+
+# ---------------------------------------------------------------- 交易约束
+constraints:
+  no_buy_limit_up: 0.095      # 开盘涨幅超过此值不买
+  no_sell_limit_down: -0.095  # 开盘跌幅低于此值不卖
+
+# ---------------------------------------------------------------- 回测
+backtest:
+  start_date: "2018-01-01"
+  end_date: ""
+  risk_free_rate: 0.02
+
+# ---------------------------------------------------------------- 输出
+output:
+  dir: "output"
+  state_dir: "state"
+
+# ---------------------------------------------------------------- 日志
+logging:
+  level: "INFO"
+  dir: "logs"
