@@ -189,12 +189,76 @@ def cmd_status(cfg, args) -> int:
     return 0
 
 
-def cmd_backtest(cfg, args) -> int:
-    """跑一次组合回测。"""
+def run_backtest(cfg, runner, trade_date: str, codes: list[str],
+                 start_date: str, end_date: str = "", verbose: bool = True):
+    """执行一次组合回测，返回 (BacktestResult, 输出目录)。
+
+    抽成独立函数，供 `backtest` 与 `all` 两个命令共用。
+    """
     import pandas as pd
     from .backtest import Backtester
-    from .runner import TradingRunner
     from .strategy import compute_indicators, market_return_series
+
+    bt_cfg = dict(cfg.strategy_cfg)
+    bt_cfg["backtest"] = {"start_date": start_date,
+                          "end_date": end_date or "",
+                          "risk_free_rate": 0.02}
+
+    warmup = pd.Timestamp(start_date) - pd.Timedelta(days=500)
+    index = cfg.get("strategy.entry.market_index", "000852.SH")
+    window = int(cfg.get("strategy.entry.market_ret_window", 60))
+    print(f"[data] 加载指数 {index} ...", flush=True)
+    idx_close = runner.data.index_daily(index, warmup.strftime("%Y%m%d"), trade_date)
+    if idx_close is None:
+        raise RuntimeError("指数数据不可用，回测终止")
+    mret = market_return_series(idx_close, window)
+
+    cal = [d for d in runner.calendar
+           if warmup.strftime("%Y%m%d") <= d <= trade_date]
+    print(f"[data] 加载 {len(codes)} 只标的 K 线 ...", flush=True)
+    data = {}
+    for i, code in enumerate(codes, 1):
+        try:
+            df = runner.data.daily(code, warmup.strftime("%Y%m%d"), trade_date, adj="qfq")
+            if df is None or len(df) < 160:
+                continue
+            d = compute_indicators(df, cfg.strategy_cfg, calendar=cal, market_ret=mret)
+            d["code"] = code
+            data[code] = d
+        except Exception as e:
+            logging.getLogger("backtest").debug(f"{code}: {e}")
+        if i % 50 == 0:
+            print(f"       {i}/{len(codes)} 成功 {len(data)}", flush=True)
+
+    if not data:
+        raise RuntimeError("无可用数据，回测终止")
+
+    print(f"[backtest] 标的 {len(data)} 只，开始回测 ...", flush=True)
+    bt = Backtester(data, bt_cfg, index_close=idx_close)
+    res = bt.run(verbose=verbose)
+
+    outdir = Path(cfg.get("output.dir")) / f"backtest_{pd.Timestamp.now():%Y%m%d_%H%M%S}"
+    outdir.mkdir(parents=True, exist_ok=True)
+    res.equity.to_csv(outdir / "equity.csv", index=False, encoding="utf-8-sig")
+    if len(res.trades):
+        res.trades.to_csv(outdir / "trades.csv", index=False, encoding="utf-8-sig")
+    (outdir / "metrics.json").write_text(
+        json.dumps(res.metrics, ensure_ascii=False, indent=2, default=str),
+        encoding="utf-8")
+    return res, outdir
+
+
+def _print_metrics(res) -> None:
+    print("\n" + "=" * 68)
+    print("  回测绩效")
+    print("=" * 68)
+    for k, v in res.metrics.items():
+        print(f"  {k:<14}: {v}")
+
+
+def cmd_backtest(cfg, args) -> int:
+    """跑一次组合回测。"""
+    from .runner import TradingRunner
 
     runner = TradingRunner(cfg)
     trade_date = args.date or runner.trade_date()
@@ -210,61 +274,107 @@ def cmd_backtest(cfg, args) -> int:
     if args.limit:
         codes = codes[: args.limit]
 
-    bt_cfg = dict(cfg.strategy_cfg)
-    bt_cfg["backtest"] = {"start_date": args.start or "2018-01-01",
-                          "end_date": args.end or "", "risk_free_rate": 0.02}
-
-    start = pd.Timestamp(bt_cfg["backtest"]["start_date"]) - pd.Timedelta(days=500)
-    index = cfg.get("strategy.entry.market_index", "000852.SH")
-    window = int(cfg.get("strategy.entry.market_ret_window", 60))
-    print(f"[data] 加载指数 {index} ...")
-    idx_close = runner.data.index_daily(index, start.strftime("%Y%m%d"), trade_date)
-    if idx_close is None:
-        print("指数数据不可用，回测终止")
+    try:
+        res, outdir = run_backtest(cfg, runner, trade_date, codes,
+                                   args.start or "2018-01-01", args.end or "")
+    except RuntimeError as e:
+        print(str(e))
         return 1
-    mret = market_return_series(idx_close, window)
-
-    cal = [d for d in runner.calendar
-           if start.strftime("%Y%m%d") <= d <= trade_date]
-    print(f"[data] 加载 {len(codes)} 只标的 K 线 ...")
-    data = {}
-    for i, code in enumerate(codes, 1):
-        try:
-            df = runner.data.daily(code, start.strftime("%Y%m%d"), trade_date, adj="qfq")
-            if df is None or len(df) < 160:
-                continue
-            d = compute_indicators(df, cfg.strategy_cfg, calendar=cal, market_ret=mret)
-            d["code"] = code
-            data[code] = d
-        except Exception as e:
-            logging.getLogger("backtest").debug(f"{code}: {e}")
-        if i % 50 == 0:
-            print(f"       {i}/{len(codes)} 成功 {len(data)}", flush=True)
-
-    if not data:
-        print("无可用数据，回测终止")
-        return 1
-
-    print(f"[backtest] 标的 {len(data)} 只，开始回测 ...")
-    bt = Backtester(data, bt_cfg, index_close=idx_close)
-    res = bt.run(verbose=True)
-
-    outdir = Path(cfg.get("output.dir")) / f"backtest_{pd.Timestamp.now():%Y%m%d_%H%M%S}"
-    outdir.mkdir(parents=True, exist_ok=True)
-    res.equity.to_csv(outdir / "equity.csv", index=False, encoding="utf-8-sig")
-    if len(res.trades):
-        res.trades.to_csv(outdir / "trades.csv", index=False, encoding="utf-8-sig")
-    (outdir / "metrics.json").write_text(
-        json.dumps(res.metrics, ensure_ascii=False, indent=2, default=str),
-        encoding="utf-8")
-
-    print("\n" + "=" * 68)
-    print("  回测绩效")
-    print("=" * 68)
-    for k, v in res.metrics.items():
-        print(f"  {k:<14}: {v}")
+    _print_metrics(res)
     print(f"\n结果已保存: {outdir}")
     return 0
+
+
+def cmd_all(cfg, args) -> int:
+    """
+    一条命令跑完整个流程：体检 -> 盘前 -> 扫描 -> 建仓 -> 监控 -> 结算 -> 回测。
+
+    任何一步失败都会带着「第几步失败」的信息退出，便于定位。
+    """
+    from .runner import TradingRunner
+
+    steps = []
+    runner = TradingRunner(cfg)
+    trade_date = args.date or runner.trade_date()
+    if not trade_date:
+        print("无法确定最近交易日")
+        return 1
+
+    def step(name, fn):
+        print(f"\n{'=' * 68}\n  [{len(steps) + 1}] {name}\n{'=' * 68}", flush=True)
+        try:
+            out = fn()
+            steps.append((name, "OK", out))
+            return out
+        except Exception as e:
+            steps.append((name, "FAIL", str(e)))
+            print(f"\n[失败] {name}: {e}", file=sys.stderr)
+            raise
+
+    try:
+        step("环境体检", lambda: _doctor_quiet(cfg, args))
+        plan = step("盘前准备", lambda: runner.task_prepare(trade_date))
+        sig = step("扫描信号", lambda: runner.task_scan(trade_date,
+                                                        limit=args.limit or None))
+        # 注意：scan 显示的是「当日收盘后」的信号，供下一交易日执行；
+        # execute 成交的是「上一交易日」的信号。两者日期不同，数量不必相等。
+        print(f"  当日收盘信号: {len(sig)} 个（供下一交易日执行）")
+        if len(sig):
+            print(sig.to_string(index=False))
+        exe = step("建仓", lambda: runner.task_execute(trade_date,
+                                                  dry_run=args.dry_run,
+                                                  limit=args.limit or None))
+        print(f"  按上一交易日({exe.get('signal_date', '?')})信号成交: "
+              f"{exe.get('n_filled', 0)} 笔 / 信号 {exe.get('n_signals', 0)} 个")
+        mon = step("持仓监控", lambda: runner.task_monitor(trade_date,
+                                                    dry_run=args.dry_run))
+        print(f"  卖出: {mon.get('n_sold', 0)}")
+        rep = step("收盘结算", lambda: runner.task_settle(trade_date))
+        print(f"  权益: {rep.get('equity')}  收益%: {rep.get('total_return_pct')}")
+
+        if not args.no_backtest:
+            uni = runner.load_state("universe.json", {})
+            codes = uni.get("codes", [])
+            if args.limit:
+                codes = codes[: args.limit]
+            res, outdir = step("回测", lambda: run_backtest(
+                cfg, runner, trade_date, codes,
+                args.start or "2018-01-01", args.end or "", verbose=False))
+            _print_metrics(res)
+            print(f"\n  结果已保存: {outdir}")
+    except Exception:
+        print("\n流程中断，已完成步骤：")
+        for n, st, _ in steps:
+            print(f"  [{st}] {n}")
+        return 1
+
+    print(f"\n{'=' * 68}")
+    print("  全流程完成")
+    print(f"{'=' * 68}")
+    for n, st, _ in steps:
+        print(f"  [{st}] {n}")
+    print(f"\n  交易日: {trade_date}")
+    print(f"  模式  : {cfg.mode}")
+    print(f"  账户  : {cfg.get('output.state_dir')}/paper_account.json")
+    return 0
+
+
+def _doctor_quiet(cfg, args) -> dict:
+    """集成流程里的体检：只做关键检查，失败抛异常。"""
+    from .credentials import TokenNotFound, resolve_token
+    from .data import TushareData
+    try:
+        tok = resolve_token(args.token)
+    except TokenNotFound as e:
+        raise RuntimeError(str(e))
+    data = TushareData(token=tok,
+                       cache_dir=cfg.get("datasource.cache_dir"),
+                       min_interval=float(cfg.get("datasource.tushare.min_interval", 0.35)))
+    cal = data.trade_calendar("20260101", "20261231")
+    if not cal:
+        raise RuntimeError(f"交易日历接口不可用: {data.last_error}")
+    print(f"  token 与接口 OK，交易日历 {len(cal)} 天")
+    return {"calendar_days": len(cal)}
 
 
 # ---------------------------------------------------------------------------
@@ -321,6 +431,15 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--end", default=None, help="回测结束日期 YYYY-MM-DD")
     p.add_argument("--limit", type=int, default=0, help="只回测前 N 只标的（调试）")
     p.set_defaults(func=cmd_backtest)
+
+    p = sub.add_parser("all", help="一条命令跑完：体检->盘前->扫描->建仓->监控->结算->回测")
+    add_date(p)
+    p.add_argument("--start", default=None, help="回测开始日期 YYYY-MM-DD（默认 2018-01-01）")
+    p.add_argument("--end", default=None, help="回测结束日期 YYYY-MM-DD")
+    p.add_argument("--limit", type=int, default=0, help="回测只跑前 N 只标的（调试）")
+    p.add_argument("--dry-run", action="store_true", help="建仓与卖出只演练，不改账户")
+    p.add_argument("--no-backtest", action="store_true", help="跳过回测，只跑当日流程")
+    p.set_defaults(func=cmd_all)
 
     return ap
 

@@ -153,9 +153,14 @@ class TushareData:
 
     def _cache_fresh(self, path: Path, start: str, end: str) -> pd.DataFrame | None:
         """
-        缓存可用需同时满足：
-          1) 末行日期距今 ≤ 7 个自然日（数据新）
-          2) 首行日期 ≤ 请求起点 + 45 天（覆盖了请求区间，否则回测会被悄悄缩短）
+        读取缓存并**裁剪到请求区间**。
+
+        缓存命中需同时满足：
+          1) 末行日期 ≥ 请求终点 - 7 天（数据够新）
+          2) 首行日期 ≤ 请求起点 + 45 天（覆盖了请求起点）
+
+        关键：缓存可能包含请求终点之后的数据（例如用近期缓存回放历史某日），
+        必须按 end 截断，否则会引入未来数据。
         """
         if not path.exists():
             return None
@@ -168,6 +173,11 @@ class TushareData:
                 return None            # 太旧
             if df["date"].min() > pd.Timestamp(start) + pd.Timedelta(days=45):
                 return None            # 不含请求起点，需重新拉取
+            # 裁剪到请求区间——防止缓存中的未来数据泄漏进回测
+            df = df[(df["date"] >= pd.Timestamp(start)) &
+                    (df["date"] <= pd.Timestamp(end))]
+            if len(df) < 2:
+                return None
             return df.sort_values("date").reset_index(drop=True)
         except Exception:
             return None
@@ -239,7 +249,8 @@ class TushareData:
         cache_p = self.cache_dir / "index" / f"{code6}.csv" if self.cache_dir else None
         if use_cache and cache_p is not None:
             cached = self._cache_fresh(cache_p, start, end)
-            if cached is not None and len(cached) > 10:
+            # 只要缓存覆盖了请求区间就用它（不要求行数，否则短区间会漏到网络路径）
+            if cached is not None:
                 s = cached.set_index("date")["close"].astype(float).sort_index()
                 return s
 

@@ -12,9 +12,19 @@ ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
 from tushare_trader.config import Config, load_config  # noqa: E402
+from tushare_trader import credentials as cred  # noqa: E402
 from tushare_trader.credentials import (  # noqa: E402
     TokenNotFound, mask, resolve_token, token_source,
 )
+
+
+def _isolate_home(monkeypatch, tmp_path):
+    """把 ~/.tushare/token 指向不存在的路径。
+
+    `credentials.HOME_TOKEN` 是模块级常量，导入时就已求值，
+    因此必须替换该常量，而不是 patch Path.home。
+    """
+    monkeypatch.setattr(cred, "HOME_TOKEN", tmp_path / "no_such_home" / "token")
 from tushare_trader.data import TushareData  # noqa: E402
 
 
@@ -80,6 +90,7 @@ def test_resolve_token_from_env(monkeypatch):
 
 def test_resolve_token_missing_raises(monkeypatch, tmp_path):
     monkeypatch.delenv("TUSHARE_TOKEN", raising=False)
+    _isolate_home(monkeypatch, tmp_path)
     with pytest.raises(TokenNotFound) as ei:
         resolve_token(None, project_root=tmp_path)
     msg = str(ei.value)
@@ -90,12 +101,14 @@ def test_resolve_token_missing_raises(monkeypatch, tmp_path):
 
 def test_resolve_token_from_file(monkeypatch, tmp_path):
     monkeypatch.delenv("TUSHARE_TOKEN", raising=False)
+    _isolate_home(monkeypatch, tmp_path)
     (tmp_path / ".tushare_token").write_text("filetoken_abc\n", encoding="utf-8")
     assert resolve_token(None, project_root=tmp_path) == "filetoken_abc"
 
 
 def test_resolve_token_from_file_kv(monkeypatch, tmp_path):
     monkeypatch.delenv("TUSHARE_TOKEN", raising=False)
+    _isolate_home(monkeypatch, tmp_path)
     (tmp_path / ".tushare_token").write_text(
         "# comment\nTUSHARE_TOKEN=kv_token_123\n", encoding="utf-8")
     assert resolve_token(None, project_root=tmp_path) == "kv_token_123"
@@ -263,3 +276,41 @@ def test_paged_fetch_handles_multiple_pages(tmp_path):
     assert len(pro.calls) >= 2
     assert out["trade_date"].is_monotonic_increasing
     assert out["trade_date"].is_unique
+
+
+def test_cache_does_not_leak_future_data(tmp_path):
+    """缓存若含请求终点之后的数据，必须被截断——否则 --date 回放会看到未来。
+
+    这是真实踩到过的缺陷：用近期缓存 + 历史 --date 时，daily() 曾返回
+    1096 行终点之后的数据。
+    """
+    frame = _daily_frame(n=5, start="2026-01-05")          # 缓存覆盖 1/5~1/9
+    pro = FakePro({"daily": frame, "adj_factor": pd.DataFrame({
+        "ts_code": "000001.SZ", "trade_date": frame["trade_date"],
+        "adj_factor": [1.0] * len(frame)})})
+    d = TushareData(pro=pro, cache_dir=tmp_path, min_interval=0)
+    d.daily("000001.SZ", "20260105", "20260109")           # 先写缓存
+
+    # 再用同一缓存回放更早的区间：终点 1/7
+    out = d.daily("000001.SZ", "20260105", "20260107", use_cache=True)
+    assert out is not None
+    assert out["date"].max() <= pd.Timestamp("2026-01-07"), "缓存泄漏了终点之后的数据"
+    assert len(out) == 3
+
+
+def test_index_cache_does_not_leak_future_data(tmp_path):
+    # 需要 >10 行，才会走 index_daily 的缓存分支
+    n = 20
+    dates = pd.bdate_range("2026-01-05", periods=n)
+    frame = pd.DataFrame({
+        "ts_code": "000852.SH",
+        "trade_date": [d.strftime("%Y%m%d") for d in dates],
+        "close": [7000.0 + i for i in range(n)],
+    })
+    d = TushareData(pro=FakePro({"index_daily": frame}), cache_dir=tmp_path,
+                    min_interval=0)
+    d.index_daily("000852.SH", "20260105", "20260201")
+    s = d.index_daily("000852.SH", "20260105", "20260115", use_cache=True)
+    assert len(s) == 9          # 2026-01-05 ~ 01-15 共 9 个交易日
+    assert s is not None
+    assert s.index.max() <= pd.Timestamp("2026-01-15"), "指数缓存泄漏了终点之后的数据"

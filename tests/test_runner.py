@@ -323,3 +323,37 @@ def test_monitor_sells_on_stop(crash_runner):
     out = crash_runner.task_monitor("20211216")
     assert out["n_sold"] >= 1
     assert code not in crash_runner._broker().positions
+
+
+# ---------------------------------------------------------------------------
+# limit 参数：调试时只跑前 N 只，不影响 prepare 记录的标的池
+# ---------------------------------------------------------------------------
+def test_scan_limit_does_not_touch_universe(crash_runner):
+    crash_runner.task_prepare("20211215")
+    before = crash_runner.load_state("universe.json")["codes"]
+    crash_runner.task_scan("20211215", limit=1)
+    after = crash_runner.load_state("universe.json")["codes"]
+    assert before == after, "scan 的 limit 不应改写标的池"
+
+
+def test_execute_limit_caps_fills(crash_runner):
+    crash_runner.task_prepare("20211215")
+    out = crash_runner.task_execute("20211215", limit=1)
+    # 只扫描 1 只标的，最多成交 1 笔
+    assert out["n_filled"] <= 1
+
+
+def test_market_ret_is_cached(crash_runner):
+    """同一 as_of 的指数收益只应计算一次（性能回归）。"""
+    calls = {"n": 0}
+    orig = crash_runner.data.index_daily
+
+    def counting(*a, **kw):
+        calls["n"] += 1
+        return orig(*a, **kw)
+
+    crash_runner.data.index_daily = counting
+    crash_runner.market_ret("20211215")
+    first = calls["n"]
+    crash_runner.market_ret("20211215")
+    assert calls["n"] == first, "market_ret 未命中缓存，会重复请求指数"

@@ -53,6 +53,9 @@ class TradingRunner:
         )
         self.strategy = BollBandStrategy(cfg.strategy_cfg)
         self._calendar: list[str] | None = None
+        # 缓存：指数收益序列 / 交易日历子区间（避免逐只股票重复计算）
+        self._market_ret_cache: dict[str, pd.Series | None] = {}
+        self._calendar_cache: dict[tuple[str, str], list[str]] = {}
 
     # ------------------------------------------------------------ 状态
     def _state_path(self, name: str) -> Path:
@@ -99,7 +102,13 @@ class TradingRunner:
         return cal[-1] if cal else None
 
     def market_ret(self, as_of: str) -> pd.Series | None:
-        """指数 N 日收益序列。"""
+        """指数 N 日收益序列（按 as_of 缓存，避免每只股票重复拉取）。
+
+        没有这层缓存时，`_load_one` 会为每只持仓/每只标的各拉一次指数，
+        扫描 800 只标的就会重复请求 800 次，是实际的性能瓶颈。
+        """
+        if as_of in self._market_ret_cache:
+            return self._market_ret_cache[as_of]
         index = self.cfg.get("strategy.entry.market_index", "000852.SH")
         window = int(self.cfg.get("strategy.entry.market_ret_window", 60))
         start = (pd.Timestamp(as_of) - pd.Timedelta(days=int(window * 2.5) + 400)
@@ -107,8 +116,11 @@ class TradingRunner:
         s = self.data.index_daily(index, start, as_of)
         if s is None or len(s) <= window:
             LOG.warning(f"指数 {index} 数据不足，无法计算择时")
+            self._market_ret_cache[as_of] = None
             return None
-        return market_return_series(s, window)
+        out = market_return_series(s, window)
+        self._market_ret_cache[as_of] = out
+        return out
 
     def load_codes(self, codes: list[str], as_of: str,
                    min_bars: int = 160) -> dict[str, pd.DataFrame]:
@@ -167,13 +179,19 @@ class TradingRunner:
         return plan
 
     # ------------------------------------------------------------ 扫描
-    def task_scan(self, as_of: str | None = None) -> pd.DataFrame:
-        """扫描最新交易日的入场信号（只读）。"""
+    def task_scan(self, as_of: str | None = None,
+                  limit: int | None = None) -> pd.DataFrame:
+        """扫描最新交易日的入场信号（只读）。
+
+        limit : 只扫描前 N 只（调试/快速验证用，不影响 prepare 记录的标的池）
+        """
         trade_date = as_of or self.trade_date()
         uni = self.load_state("universe.json", {})
         codes = uni.get("codes", [])
         if not codes:
             raise RuntimeError("标的池为空，请先执行 prepare")
+        if limit:
+            codes = codes[:limit]
 
         data = self.load_codes(codes, trade_date)
         rows = []
@@ -193,7 +211,8 @@ class TradingRunner:
         return signals
 
     # ------------------------------------------------------------ 建仓
-    def task_execute(self, as_of: str | None = None, dry_run: bool = False) -> dict:
+    def task_execute(self, as_of: str | None = None, dry_run: bool = False,
+                     limit: int | None = None) -> dict:
         """
         按「上一交易日收盘信号」，在 `as_of`（默认最近交易日）开盘建仓。
 
@@ -222,6 +241,8 @@ class TradingRunner:
         codes = uni.get("codes", [])
         if not codes:
             raise RuntimeError("标的池为空，请先执行 prepare")
+        if limit:
+            codes = codes[:limit]
 
         data = self.load_codes(codes, trade_date)
         candidates = []
@@ -408,9 +429,17 @@ class TradingRunner:
         df = self.data.daily(code, start, as_of, adj="qfq")
         if df is None or len(df) < 20:
             return None
-        cal = [d for d in self.calendar if start <= d <= as_of]
-        return compute_indicators(df, self.cfg.strategy_cfg, calendar=cal,
+        return compute_indicators(df, self.cfg.strategy_cfg,
+                                  calendar=self._calendar_slice(start, as_of),
                                   market_ret=self.market_ret(as_of))
+
+    def _calendar_slice(self, start: str, as_of: str) -> list[str]:
+        """交易日历子区间（带缓存，避免每次重算列表推导）。"""
+        key = (start, as_of)
+        if key not in self._calendar_cache:
+            self._calendar_cache[key] = [d for d in self.calendar
+                                         if start <= d <= as_of]
+        return self._calendar_cache[key]
 
     def _marks(self, broker: PaperBroker, as_of: str) -> dict[str, float]:
         marks: dict[str, float] = {}

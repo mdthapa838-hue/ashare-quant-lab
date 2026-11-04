@@ -24,9 +24,32 @@
 
 ---
 
-## 二、三分钟跑起来
+## 二、一条命令跑起来
 
-### 2.1 安装
+### 2.1 全自动（推荐）
+
+```bash
+./setup.sh 你的token              # 建虚拟环境 + 装依赖 + 配 token + 体检
+./setup.sh 你的token --run        # 再跑一遍完整流程（含回测）
+./setup.sh --run --limit 60       # 用已有 token，只跑前 60 只（快速验证）
+```
+
+`setup.sh` 做的事：建 `.venv` → 装 `pandas/numpy/pyyaml/tushare/pytest` →
+把 token 写入 `~/.tushare/token`（权限 600，不在仓库内）→ 跑 `doctor` 体检 →
+可选跑完整流程。任何一步失败都会停下并指出失败项。
+
+### 2.2 全流程一条命令
+
+```bash
+.venv/bin/python -m tushare_trader all            # 体检->盘前->扫描->建仓->监控->结算->回测
+.venv/bin/python -m tushare_trader all --dry-run  # 只演练，不改账户
+.venv/bin/python -m tushare_trader all --no-backtest
+.venv/bin/python -m tushare_trader all --date 20220425 --limit 60
+```
+
+任一步失败会打印「已完成步骤」并退出，便于定位。
+
+### 2.3 手工安装
 
 ```bash
 pip install pandas numpy pyyaml tushare
@@ -34,7 +57,7 @@ pip install pandas numpy pyyaml tushare
 # pip install "numpy<2" --upgrade
 ```
 
-### 2.2 配置 token（不写入仓库）
+### 2.4 配置 token（不写入仓库）
 
 任选一种：
 
@@ -52,7 +75,7 @@ echo 你的token > .tushare_token && chmod 600 .tushare_token
 > ⚠️ **永远不要把 token 提交进仓库。** `.gitignore` 已排除 `.tushare_token`、
 > `.env`、`credentials*.json`。`doctor` 输出只显示脱敏后的 token（`e95a****ee5e`）。
 
-### 2.3 体检 + 跑一天
+### 2.5 分步执行
 
 ```bash
 python -m tushare_trader doctor                    # 先确认接口通
@@ -64,7 +87,7 @@ python -m tushare_trader settle                    # 收盘结算
 python -m tushare_trader status                    # 看账户
 ```
 
-### 2.4 回测
+### 2.6 单独回测
 
 ```bash
 python -m tushare_trader prepare                              # 先建标的池
