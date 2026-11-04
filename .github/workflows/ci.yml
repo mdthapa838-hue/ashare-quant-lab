@@ -8,11 +8,12 @@ on:
 
 jobs:
   test:
-    runs-on: ubuntu-latest
+    # 固定 ubuntu-24.04：ubuntu-latest 已升级到 26.04，其上没有 Python 3.9
+    runs-on: ubuntu-24.04
     strategy:
       fail-fast: false
       matrix:
-        python-version: ["3.9", "3.11"]
+        python-version: ["3.9", "3.11", "3.12"]
 
     steps:
       - uses: actions/checkout@v4
