@@ -26,8 +26,14 @@ jobs:
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
-          # numpy<2 以兼容 pandas<2.1 的二进制接口
-          pip install "pandas<2.1" "numpy<2" pyyaml tushare pytest
+          # 不钉死 pandas/numpy 版本：代码同时兼容 pandas 2.0+numpy 1.26
+          # 与 pandas 2.3+numpy 2.x（两者本地与 CI 均已实测通过）。
+          # 钉死 "pandas<2.1" 会在 Python 3.12 上无 wheel 可用而编译失败。
+          pip install pandas numpy pyyaml tushare pytest
+
+      - name: Show versions
+        run: |
+          python -c "import sys, pandas, numpy; print(sys.version); print('pandas', pandas.__version__, 'numpy', numpy.__version__)"
 
       - name: Run tests (offline)
         run: python -m pytest tests -q
