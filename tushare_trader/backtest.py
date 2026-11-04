@@ -67,7 +67,6 @@ class Backtester:
         pf = cfg.get("portfolio", {})
         self.initial_capital = float(pf.get("initial_capital", 1_000_000))
         risk = cfg.get("risk", {})
-        self.sector_max = int(risk.get("sector_concentration_max", 2) or 0)
         self.daily_max_orders = int(risk.get("daily_max_orders", 20) or 20)
 
         self._idxmap = {
