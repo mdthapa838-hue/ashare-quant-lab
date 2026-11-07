@@ -467,3 +467,22 @@ def test_cli_screen_defaults():
     assert args.holder_type == "全国社保基金"
     assert args.sort == "market_cap"
     assert args.period is None
+
+
+def test_screen_portfolio_count_dedupes_by_key(tmp_path):
+    """报告抬头的「N 个组合」必须按股东编码去重，不能数名称。"""
+    from eastmoney_holders.screen import screen
+
+    raw = tmp_path / "raw"
+    rows = [
+        _ss_row("2026-09-30", "000001.SZ", "社保基金2103组合", "K1", 100, "新进", 100.0),
+        _ss_row("2026-09-30", "000001.SZ", "国泰基金管理有限公司-社保基金2103组合",
+                "K1", 50, "新进", 50.0),
+        _ss_row("2026-09-30", "000002.SZ", "社保基金四一三组合", "K2", 10, "新进", 10.0),
+    ]
+    write_csv(raw / "detail_free_2026-09-30.csv", rows)
+    csv_path = screen(raw, tmp_path / "out", "全国社保基金", "2026-09-30")
+    md = csv_path.with_suffix(".md").read_text(encoding="utf-8")
+    assert "共有 2 个组合" in md          # K1 + K2，而不是 3 个名字
+    # 内部字段不应写进 CSV
+    assert "_portfolio_keys" not in read_csv(csv_path)[0]

@@ -100,9 +100,10 @@ def _aggregate(rows: Iterable[dict[str, str]], holder_type: str) -> dict[str, di
             d["flat_num"] += 1
 
     for d in by_stock.values():
-        names = sorted(d.pop("_names").values())
-        d["portfolios"] = ";".join(names)
-        d["portfolio_num"] = len(names)
+        named = d.pop("_names")
+        d["portfolios"] = ";".join(sorted(named.values()))
+        d["portfolio_num"] = len(named)
+        d["_portfolio_keys"] = set(named)
         d["market_cap"] = round(d["market_cap"], 2)
         d["hold_num_total"] = round(d["hold_num_total"], 2)
         d["ratio_of_float"] = round(d["ratio_of_float"], 4)
@@ -189,7 +190,8 @@ def screen(period_dir: str | Path, out_dir: str | Path, holder_type: str,
     total_stocks = len(rows)
     total_cap = sum(d["market_cap"] for d in rows)
     total_hold = sum(d["hold_num_total"] for d in rows)
-    all_names = {n for d in rows for n in d["portfolios"].split(";") if n}
+    # 组合数按股东唯一编码去重，不能数名称（同一组合会有简称与全称两个名字）
+    all_keys = {k for d in rows for k in d["_portfolio_keys"]}
 
     for i, d in enumerate(rows[:top_n], 1):
         body.append([
@@ -209,7 +211,7 @@ def screen(period_dir: str | Path, out_dir: str | Path, holder_type: str,
 
     md = [f"# {holder_type} 重仓股 — {end_date}（{hold_type}口径）\n",
           f"> 数据源：东方财富数据中心（本仓库 eastmoney_holders 抓取）  ",
-          f"> 口径：{holder_type}共有 {len(all_names)} 个组合出现在 {total_stocks} 只股票的"
+          f"> 口径：{holder_type}共有 {len(all_keys)} 个组合出现在 {total_stocks} 只股票的"
           f"前十大流通股东名单里，合计持股市值 {money(total_cap)}、合计持股 "
           f"{total_hold / 1e8:.2f} 亿股。  "]
     if prev:
