@@ -16,6 +16,7 @@ from __future__ import annotations
 import json
 import logging
 from collections import Counter, defaultdict
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 
@@ -150,7 +151,7 @@ def build_report(periods_dir: str | Path, out_dir: str | Path, hold_type: str,
     add(f"> 数据源：https://datapc.eastmoney.com/pc_dc/gdcg/index.html （页面口径：{hold_type}）  ")
     add(f"> 抓取方式：`python -m eastmoney_holders all`，逐页翻完 报告期 × 分页 的全部接口数据  ")
     add(f"> 报告期：{len(periods)} 期（{periods[-1]} ~ {periods[0]}）  明细行：{len(detail_rows):,}  ")
-    add(f"> 生成时间：由 CLI 运行时决定，字段口径见文末「口径与局限」\n")
+    add(f"> 生成时间：{datetime.now().strftime('%Y-%m-%d %H:%M')}（口径见文末「口径与局限」）\n")
 
     add("## 一、结果总览\n")
     add(_md_table(
