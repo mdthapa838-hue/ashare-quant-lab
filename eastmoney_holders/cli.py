@@ -86,6 +86,30 @@ def cmd_report(args) -> int:
     return 0
 
 
+def cmd_screen(args) -> int:
+    from .screen import screen
+
+    period_dir = Path(args.out) / "raw"
+    # 默认最新期 = raw 目录里 detail 文件最大的日期
+    end_date = args.period
+    prev = args.prev_period
+    if end_date is None:
+        files = sorted(period_dir.glob(f"detail_{TYPE_SLUG[_hold_types(args.type)[0]]}_*.csv"),
+                       reverse=True)
+        if not files:
+            print("[错误] 还没有抓取数据，请先运行 crawl", file=sys.stderr)
+            return 2
+        end_date = files[0].stem.split("_")[-1]
+        prev = prev if prev is not None else (
+            files[1].stem.split("_")[-1] if len(files) > 1 else None)
+    path = screen(period_dir, Path(args.out) / "screen", args.holder_type, end_date,
+                  hold_type=_hold_types(args.type)[0], prev_end_date=prev,
+                  sort_by=args.sort, top_n=args.top)
+    print(f"结果: {path}")
+    print(f"榜单: {path.with_suffix('.md')}")
+    return 0
+
+
 def cmd_verify(args) -> int:
     from .verify import verify
 
@@ -114,7 +138,7 @@ def build_parser() -> argparse.ArgumentParser:
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     p.add_argument("command", nargs="?", default="all",
-                   choices=["all", "crawl", "report", "dates", "verify"],
+                   choices=["all", "crawl", "report", "dates", "verify", "screen"],
                    help="要执行的步骤，默认 all")
     p.add_argument("--out", type=Path, default=DEFAULT_OUT, help="产物目录")
     p.add_argument("--type", default="both", choices=["free", "total", "both"],
@@ -125,6 +149,12 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--interval", type=float, default=0.25, help="两次请求最小间隔秒数")
     p.add_argument("--retry", type=int, default=4, help="失败重试次数")
     p.add_argument("--base-url", default=None, help="接口地址（默认东方财富数据中心）")
+    p.add_argument("--holder-type", default="全国社保基金",
+                   help="screen 要筛的股东类型（如 全国社保基金 / 基本养老基金 / QFII）")
+    p.add_argument("--period", default=None, help="screen 的报告期，默认最新一期")
+    p.add_argument("--prev-period", default=None, help="screen 用于对比的上一期，默认次新一期")
+    p.add_argument("--sort", default="market_cap", choices=["market_cap", "holders", "ratio"],
+                   help="screen 排序：持股市值 / 持股家数 / 占流通股比例")
     p.add_argument("--with-change-rate", action="store_true",
                    help="额外抓每个报告期的「持股平均涨幅/上涨比例」")
     p.add_argument("--refresh", action="store_true", help="忽略已有 CSV 重新抓")
@@ -136,7 +166,7 @@ def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
     _setup_logging(args.verbose)
     handlers = {"dates": cmd_dates, "crawl": cmd_crawl, "report": cmd_report,
-                "verify": cmd_verify, "all": cmd_all}
+                "verify": cmd_verify, "screen": cmd_screen, "all": cmd_all}
     try:
         return handlers[args.command](args)
     except EastmoneyError as e:

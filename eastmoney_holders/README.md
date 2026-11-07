@@ -53,6 +53,10 @@ python -m eastmoney_holders report
 
 # 先看看有哪些报告期
 python -m eastmoney_holders dates
+
+# 按股东类型筛「重仓股」（默认最新期，自动对比上一期）
+python -m eastmoney_holders screen --holder-type 全国社保基金
+python -m eastmoney_holders screen --holder-type 基本养老基金 --sort ratio
 ```
 
 常用参数：
@@ -62,6 +66,11 @@ python -m eastmoney_holders all --type free        # 只抓十大流通股东
 python -m eastmoney_holders all --periods 4        # 只抓最近 4 个报告期（快速验证）
 python -m eastmoney_holders report --top 50        # 报告榜单从 30 条改成 50 条
 python -m eastmoney_holders all --refresh          # 忽略已有 CSV 重新抓
+
+# screen 的常用参数
+python -m eastmoney_holders screen --holder-type 全国社保基金 --type free
+python -m eastmoney_holders screen --holder-type QFII --sort holders --top 30
+python -m eastmoney_holders screen --period 2026-09-30 --prev-period 2026-06-30
 ```
 
 只依赖 Python 标准库，无需安装任何第三方包。
@@ -92,7 +101,30 @@ python -m eastmoney_holders all --refresh          # 忽略已有 CSV 重新抓
 | `hold_ratio` | 占流通股/总股本比例（%） |
 | `market_cap` | 报告期末持股市值（元） |
 
-### 4.2 原始分页（crawl 步骤生成）
+### 4.2 按股东类型筛重仓股（screen 步骤生成）
+
+```
+screen/screen_全国社保基金_2026-09-30.csv    每只股票一行
+screen/screen_全国社保基金_2026-09-30.md     同样的内容，Markdown 榜单
+```
+
+字段：
+
+| 字段 | 含义 |
+|---|---|
+| `market_cap` | 该类型股东在这只股票上的**合计**持股市值（元） |
+| `hold_num_total` | 合计持股数（股） |
+| `ratio_of_float` | 合计占流通股比例（%） |
+| `portfolio_num` / `portfolios` | 有几个组合上榜 / 组合名（按股东编码去重） |
+| `change_status` | `新进` / `加仓` / `减仓` / `不变` —— **按合计股数判断** |
+| `hold_num_change` / `hold_num_change_pct` | 合计股数的环比变化（股 / %） |
+| `prev_hold_num_total` / `prev_market_cap` | 上一期的合计股数 / 合计市值 |
+
+> 为什么状态按合计股数判断：同一只股票可能有多只社保组合同时上榜，
+> 出现「甲组合加仓 200 万股、乙组合减仓 500 万股」时，该股票整体是减持。
+> 直接看单个组合的 `HOLD_NUM_CHANGE` 会得出相反结论。
+
+### 4.3 原始分页（crawl 步骤生成）
 
 ```
 raw/dates_free.csv                        报告期列表
@@ -140,7 +172,7 @@ for r in sorted(hist, key=lambda x: (x["end_date"], x["secucode"])):
 ## 七、测试
 
 ```bash
-python -m pytest tests/test_eastmoney_holders.py -q   # 33 个用例，全部离线
+python -m pytest tests/test_eastmoney_holders.py -q   # 38 个用例，全部离线
 ```
 
 覆盖：数值归一、变化分类、股东画像聚合、历史环比、缺口期「重回」、

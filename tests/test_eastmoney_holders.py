@@ -346,3 +346,124 @@ def test_cli_parser_defaults():
     assert args.command == "report"
     assert args.type == "free"
     assert args.top == 7
+
+
+# ---------------------------------------------------------------------------
+# screen：按股东类型筛重仓股
+# ---------------------------------------------------------------------------
+def _ss_row(end_date, secucode, name, holder_key, hold_num, change, cap,
+            ratio=1.0, holder_type="全国社保基金", code=None):
+    return {
+        "END_DATE": end_date + " 00:00:00", "SECUCODE": secucode,
+        "SECURITY_CODE": code or secucode.split(".")[0],
+        "SECURITY_NAME_ABBR": secucode, "HOLDER_NAME": name,
+        "HOLDER_NEW": holder_key, "HOLDER_TYPE": holder_type,
+        "HOLDER_RANK": 1, "HOLD_NUM": hold_num, "HOLD_NUM_CHANGE": change,
+        "CHANGE_RATIO": None, "HOLD_RATIO": ratio, "FREE_HOLDNUM_RATIO": ratio,
+        "HOLDER_MARKET_CAP": cap, "SHARES_TYPE": "流通A股", "IS_REPORT": "1",
+    }
+
+
+@pytest.fixture
+def screen_rows():
+    """三个场景：
+       A 股：两个组合，一个加仓一个减仓，合计股数下降 → 整体应判「减仓」
+       B 股：上期无，本期两只组合新进 → 「新进」
+       C 股：单一组合持股不变 → 「不变」
+       另有一条非社保记录（QFII）不应被计入
+    """
+    return [
+        # 上期
+        _ss_row("2026-06-30", "000001.SZ", "组合甲", "P1", 1000, "不变", 1000.0),
+        _ss_row("2026-06-30", "000001.SZ", "组合乙", "P2", 1000, "不变", 1000.0),
+        _ss_row("2026-06-30", "000003.SZ", "组合甲", "P1", 500, "不变", 500.0),
+        # 本期
+        _ss_row("2026-09-30", "000001.SZ", "组合甲", "P1", 1200, "200", 1200.0),   # 加仓
+        _ss_row("2026-09-30", "000001.SZ", "组合乙", "P2", 500, "-500", 500.0),    # 减仓
+        _ss_row("2026-09-30", "000002.SZ", "组合甲", "P1", 300, "新进", 300.0, 2.5),
+        _ss_row("2026-09-30", "000002.SZ", "组合乙", "P2", 200, "新进", 200.0, 1.5),
+        _ss_row("2026-09-30", "000003.SZ", "组合甲", "P1", 500, "不变", 500.0),
+        # 干扰项：类型不符
+        _ss_row("2026-09-30", "000004.SZ", "外资", "Q1", 999, "新进", 999.0,
+                holder_type="QFII"),
+    ]
+
+
+def test_screen_status_uses_aggregate_shares(tmp_path, screen_rows):
+    """A 股整体 2000→1700 股：即使某组合「加仓」，股票整体应判减仓。"""
+    from eastmoney_holders.screen import screen
+
+    raw = tmp_path / "raw"
+    write_csv(raw / "detail_free_2026-09-30.csv",
+              [r for r in screen_rows if r["END_DATE"].startswith("2026-09-30")])
+    write_csv(raw / "detail_free_2026-06-30.csv",
+              [r for r in screen_rows if r["END_DATE"].startswith("2026-06-30")])
+    csv_path = screen(raw, tmp_path / "out", "全国社保基金", "2026-09-30",
+                      prev_end_date="2026-06-30")
+
+    rows = {r["security_code"]: r for r in read_csv(csv_path)}
+    assert set(rows) == {"000001", "000002", "000003"}   # QFII 不算进来
+
+    a = rows["000001"]
+    assert a["change_status"] == "减仓"
+    assert float(a["hold_num_change"]) == -300.0
+    assert float(a["hold_num_change_pct"]) == -15.0
+    assert a["portfolio_num"] == "2"
+
+    b = rows["000002"]
+    assert b["change_status"] == "新进"
+    assert b["portfolio_num"] == "2"
+    assert float(b["ratio_of_float"]) == 4.0     # 2.5 + 1.5
+
+    c = rows["000003"]
+    assert c["change_status"] == "不变"
+    assert float(c["hold_num_change"]) == 0.0
+
+
+def test_screen_sorts_and_writes_markdown(tmp_path, screen_rows):
+    from eastmoney_holders.screen import screen
+
+    raw = tmp_path / "raw"
+    write_csv(raw / "detail_free_2026-09-30.csv",
+              [r for r in screen_rows if r["END_DATE"].startswith("2026-09-30")])
+    csv_path = screen(raw, tmp_path / "out", "全国社保基金", "2026-09-30", top_n=2)
+    md = csv_path.with_suffix(".md").read_text(encoding="utf-8")
+    assert "全国社保基金 重仓股" in md
+    assert "口径说明" in md
+    assert "只看单一组合的「新进/加仓」会得出相反的结论" in md
+
+
+def test_screen_rarity_of_holder_type(tmp_path, screen_rows):
+    from eastmoney_holders.screen import screen
+
+    raw = tmp_path / "raw"
+    write_csv(raw / "detail_free_2026-09-30.csv",
+              [r for r in screen_rows if r["END_DATE"].startswith("2026-09-30")])
+    with pytest.raises(ValueError):
+        screen(raw, tmp_path / "out", "不存在的类型", "2026-09-30")
+
+
+def test_screen_dedupes_same_portfolio_name_variants(tmp_path):
+    """同一组合的简称与全称共用一个编码时，组合数应按编码算 1 个。"""
+    from eastmoney_holders.screen import screen
+
+    raw = tmp_path / "raw"
+    rows = [
+        _ss_row("2026-09-30", "000001.SZ", "社保基金2103组合", "K1", 100, "新进", 100.0),
+        _ss_row("2026-09-30", "000001.SZ", "国泰基金管理有限公司-社保基金2103组合",
+                "K1", 0.0001, "新进", 1.0),
+    ]
+    write_csv(raw / "detail_free_2026-09-30.csv", rows)
+    csv_path = screen(raw, tmp_path / "out", "全国社保基金", "2026-09-30")
+    rec = read_csv(csv_path)[0]
+    assert rec["portfolio_num"] == "1"
+
+
+def test_cli_screen_defaults():
+    from eastmoney_holders.cli import build_parser
+
+    args = build_parser().parse_args(["screen"])
+    assert args.command == "screen"
+    assert args.holder_type == "全国社保基金"
+    assert args.sort == "market_cap"
+    assert args.period is None
