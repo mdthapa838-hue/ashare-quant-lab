@@ -2,6 +2,7 @@
 """策略与成本模型单元测试（离线）。"""
 from __future__ import annotations
 
+import copy
 import sys
 from pathlib import Path
 
@@ -79,15 +80,19 @@ def test_market_filter_feeds_through(cfg, synthetic_bars):
     df = synthetic_bars(300)
     idx = pd.Series(np.linspace(100, 60, len(df)), index=df["date"])
     mret = market_return_series(idx, 60)
-    d = compute_indicators(df, cfg.strategy_cfg, calendar=list(df["date"]),
-                           market_ret=mret)
+    # config 默认已关闭择时（见 config/system.yaml），本测试验证「开启时」的接线
+    c = copy.deepcopy(cfg.strategy_cfg)
+    c["entry"]["use_market_filter"] = True
+    d = compute_indicators(df, c, calendar=list(df["date"]), market_ret=mret)
     # 任一行的 market_ret 必须等于该行日期对应的指数收益
     row = d.iloc[-1]
     assert row["market_ret"] == pytest.approx(mret.loc[row["date"]])
 
 
 def test_market_ok_threshold(cfg):
-    s = BollBandStrategy(cfg.strategy_cfg)
+    c = copy.deepcopy(cfg.strategy_cfg)
+    c["entry"]["use_market_filter"] = True          # 显式开启，不依赖 config 现值
+    s = BollBandStrategy(c)
     idx = pd.Series([100.0, 90.0, 70.0],
                     index=pd.to_datetime(["2024-01-02", "2024-02-02", "2024-03-02"]))
     mret = market_return_series(idx, 2)          # 70/100 - 1 = -30%
@@ -163,7 +168,11 @@ def test_initial_stop_modes(cfg):
 # 仓位计算
 # ---------------------------------------------------------------------------
 def test_position_size_equal_weight(cfg):
-    s = BollBandStrategy(cfg.strategy_cfg)     # max_positions=5, cap=25%
+    # 显式给定 max_positions=5、单只上限 25%，不依赖 config 现值
+    c = copy.deepcopy(cfg.strategy_cfg)
+    c["portfolio"]["max_positions"] = 5
+    c["portfolio"]["max_position_pct"] = 0.25
+    s = BollBandStrategy(c)
     shares = s.position_size(equity=1_000_000, cash=1_000_000, n_held=0, price=10.0)
     assert shares == 20_000                    # 200000 / 10，100 股整数倍
     assert shares % 100 == 0
